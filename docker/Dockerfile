@@ -13,9 +13,7 @@
 # limitations under the License.
 
 ARG CUDA=11.1.1
-FROM nvidia/cuda:${CUDA}-cudnn8-runtime-ubuntu18.04
-# FROM directive resets ARGS, so we specify again (the value is retained if
-# previously set).
+FROM nvidia/cuda:11.1.1-cudnn8-runtime-ubuntu18.04
 ARG CUDA
 
 # Use bash to support string substitution.
@@ -31,9 +29,13 @@ RUN apt-get update \
         kalign \
         tzdata \
         wget \
+        aria2 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get autoremove -y \
     && apt-get clean
+
+# Clone AlphaFold repository
+RUN git clone https://github.com/deepmind/alphafold.git /app/alphafold
 
 # Compile HHsuite from source.
 RUN git clone --branch v3.3.0 https://github.com/soedinglab/hh-suite.git /tmp/hh-suite \
@@ -57,13 +59,17 @@ ENV LD_LIBRARY_PATH="/opt/conda/lib:$LD_LIBRARY_PATH"
 RUN conda install -qy conda==23.5.2 \
     && conda install -y -c conda-forge \
       openmm=7.7.0 \
-      cudatoolkit==${CUDA_VERSION} \
+      cudatoolkit==${CUDA} \
       pdbfixer \
       pip \
       python=3.10 \
       && conda clean --all --force-pkgs-dirs --yes
 
+# Copy local files to the container
+# Ensure this copy command doesn't conflict with the git clone command above.
 COPY . /app/alphafold
+
+# Download specific files needed
 RUN wget -q -P /app/alphafold/alphafold/common/ \
   https://git.scicore.unibas.ch/schwede/openstructure/-/raw/7102c63615b64735c4941278d92b554ec94415f8/modules/mol/alg/src/stereo_chemical_props.txt
 
@@ -78,14 +84,7 @@ RUN pip3 install --upgrade pip --no-cache-dir \
 # Add SETUID bit to the ldconfig binary so that non-root users can run it.
 RUN chmod u+s /sbin/ldconfig.real
 
-# We need to run `ldconfig` first to ensure GPUs are visible, due to some quirk
-# with Debian. See https://github.com/NVIDIA/nvidia-docker/issues/1399 for
-# details.
-# ENTRYPOINT does not support easily running multiple commands, so instead we
-# write a shell script to wrap them up.
 WORKDIR /app/alphafold
-RUN echo $'#!/bin/bash\n\
-ldconfig\n\
-python /app/alphafold/run_alphafold.py "$@"' > /app/run_alphafold.sh \
-  && chmod +x /app/run_alphafold.sh
-ENTRYPOINT ["/app/run_alphafold.sh"]
+EXPOSE 8080
+# Open a bash shell when the container starts
+CMD ["/bin/bash"]
